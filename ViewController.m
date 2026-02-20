@@ -24,6 +24,8 @@
 - (void)viewDidLoad {
 	[super viewDidLoad];
 	self.view.backgroundColor = [UIColor clearColor];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleAppDidBecomeActive) name:UIApplicationDidBecomeActiveNotification object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleAppDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
 	[self createWebView];
 	[self startServer];
 }
@@ -84,12 +86,14 @@
 #pragma mark - 文件与服务器
 
 - (void)startServer {
-	NSString *gameRootPath = [self resolveGameRootPath];
-	if (!gameRootPath) {
+	if (!self.gameRootPath.length) {
+		self.gameRootPath = [self resolveGameRootPath];
+	}
+	if (!self.gameRootPath.length) {
 		NSLog(@"[OMORI] 未找到可用的 index.html，无法启动 Web 服务器");
 		return;
 	}
-	[self startWebServerWithRootPath:gameRootPath];
+	[self startWebServerWithRootPath:self.gameRootPath];
 }
 
 - (NSString *)resolveGameRootPath {
@@ -117,10 +121,16 @@
 }
 
 - (void)startWebServerWithRootPath:(NSString *)rootPath {
+	if (self.webServer.isRunning) {
+		NSLog(@"[OMORI] WebServer 已在运行: %@", self.webServer.serverURL.absoluteString ?: @"(null)");
+		return;
+	}
+
 	// 服务器在包含 index.html 的根目录打开
 	NSDictionary *options = @{
 		GCDWebServerOption_Port: @0,
 		GCDWebServerOption_BindToLocalhost: @YES,
+		GCDWebServerOption_AutomaticallySuspendInBackground: @NO,
 	};
 	self.webServer = [[GCDWebServer alloc] init];
 	self.webServer.delegate = self;
@@ -144,6 +154,25 @@
 	if (self.webServer.isRunning) {
 		NSLog(@"[OMORI] WebServer 已启动: %@", self.webServer.serverURL.absoluteString);
 		[self loadGameURL];
+	}
+}
+
+- (void)handleAppDidBecomeActive {
+	if (!self.webServer.isRunning) {
+		NSLog(@"[OMORI] App 回到前台，WebServer 未运行，准备重启");
+		[self startServer];
+	}
+
+	NSURL *serverURL = [self resolvedGameServerURL];
+	if (!self.webView.URL || ![self.webView.URL.absoluteString hasPrefix:serverURL.absoluteString]) {
+		NSLog(@"[OMORI] App 回到前台，刷新页面 URL=%@", serverURL.absoluteString);
+		[self loadGameURL];
+	}
+}
+
+- (void)handleAppDidEnterBackground {
+	if (self.webView.isLoading) {
+		[self.webView stopLoading];
 	}
 }
 
@@ -418,6 +447,7 @@
 }
 
 - (void)dealloc {
+	[[NSNotificationCenter defaultCenter] removeObserver:self];
 	[self.webServer stop];
 }
 

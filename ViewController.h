@@ -14,6 +14,7 @@
 
 @property (nonatomic, strong) WKWebView *webView;
 @property (nonatomic, strong) GCDWebServer *webServer;
+@property (nonatomic, copy) NSString *gameRootPath;
 
 @end
 
