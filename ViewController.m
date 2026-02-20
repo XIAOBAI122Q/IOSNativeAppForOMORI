@@ -10,6 +10,17 @@
 
 @implementation ViewController
 
+- (NSURL *)resolvedGameServerURL {
+	NSURL *serverURL = self.webServer.serverURL;
+	if (!serverURL) {
+		return [NSURL URLWithString:@"http://127.0.0.1:9000/"];
+	}
+	if (![serverURL.absoluteString hasSuffix:@"/"]) {
+		serverURL = [serverURL URLByAppendingPathComponent:@""];
+	}
+	return serverURL;
+}
+
 - (void)viewDidLoad {
 	[super viewDidLoad];
 	self.view.backgroundColor = [UIColor clearColor];
@@ -61,12 +72,12 @@
 }
 
 - (void)loadGameURL {
-	NSString *urlString = @"http://127.0.0.1:9000/";
-	NSURL *url = [NSURL URLWithString:urlString];
+	NSURL *url = [self resolvedGameServerURL];
 	if (!url) return;
 	NSURLRequest *request = [NSURLRequest requestWithURL:url
 	                                         cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
 	                                     timeoutInterval:30];
+	NSLog(@"[OMORI] 正在加载主页: %@", url.absoluteString);
 	[self.webView loadRequest:request];
 }
 
@@ -108,7 +119,7 @@
 - (void)startWebServerWithRootPath:(NSString *)rootPath {
 	// 服务器在包含 index.html 的根目录打开
 	NSDictionary *options = @{
-		GCDWebServerOption_Port: @9000,
+		GCDWebServerOption_Port: @0,
 		GCDWebServerOption_BindToLocalhost: @YES,
 	};
 	self.webServer = [[GCDWebServer alloc] init];
@@ -131,6 +142,7 @@
 	}
 
 	if (self.webServer.isRunning) {
+		NSLog(@"[OMORI] WebServer 已启动: %@", self.webServer.serverURL.absoluteString);
 		[self loadGameURL];
 	}
 }
