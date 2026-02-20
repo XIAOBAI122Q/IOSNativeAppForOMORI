@@ -10,7 +10,7 @@
 #import <WebKit/WebKit.h>
 #import "GCDWebServer/GCDWebServer.h"
 
-@interface ViewController : UIViewController <GCDWebServerDelegate, WKNavigationDelegate>
+@interface ViewController : UIViewController <GCDWebServerDelegate, WKNavigationDelegate, WKUIDelegate>
 
 @property (nonatomic, strong) WKWebView *webView;
 @property (nonatomic, strong) GCDWebServer *webServer;
