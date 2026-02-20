@@ -1,0 +1,8 @@
+.fps-button {
+    position: absolute;
+    left: 5px;
+    top: 5px;
+    width: 90px;
+    height: 40px;
+    z-index: 1489;
+}

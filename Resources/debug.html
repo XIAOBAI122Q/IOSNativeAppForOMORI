@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>WebView 调试页</title>
+	<style>
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		body {
+			min-height: 100vh;
+			background: linear-gradient(135deg, #1a5fb4 0%, #c64600 100%);
+			color: #fff;
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			padding: 20px;
+			line-height: 1.6;
+		}
+		h1 { font-size: 24px; margin-bottom: 16px; }
+		.line { margin: 8px 0; word-break: break-all; }
+		.ok { color: #8ff0a4; }
+		.err { color: #f66151; }
+		#log { margin-top: 20px; padding: 12px; background: rgba(0,0,0,0.3); border-radius: 8px; font-size: 14px; }
+	</style>
+</head>
+<body>
+	<h1>WebView 调试页</h1>
+	<p class="line">如果你能看到这页，说明 WebView 已成功加载并渲染。</p>
+	<p class="line"><strong>当前 URL:</strong> <span id="url">-</span></p>
+	<p class="line"><strong>User-Agent:</strong> <span id="ua">-</span></p>
+	<p class="line"><strong>时间:</strong> <span id="time">-</span></p>
+	<div id="log"></div>
+
+	<script>
+		document.getElementById('url').textContent = location.href;
+		document.getElementById('ua').textContent = navigator.userAgent;
+		document.getElementById('time').textContent = new Date().toLocaleString();
+
+		var logEl = document.getElementById('log');
+		function log(msg, isErr) {
+			var p = document.createElement('p');
+			p.className = isErr ? 'err' : 'ok';
+			p.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+			logEl.appendChild(p);
+		}
+
+		log('页面已执行 JS');
+		// 简单测一下同源请求
+		fetch(location.origin + '/')
+			.then(function(r) { log('GET / 状态: ' + r.status); return r.text(); })
+			.then(function(t) { log('GET / 长度: ' + (t ? t.length : 0) + ' 字符'); })
+			.catch(function(e) { log('GET / 失败: ' + e.message, true); });
+	</script>
+</body>
+</html>
