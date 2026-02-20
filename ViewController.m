@@ -376,6 +376,35 @@
 - (void)webView:(WKWebView *)webView didReceiveServerRedirectForProvisionalNavigation:(WKNavigation *)navigation {
 }
 
+
+#pragma mark - WKUIDelegate
+
+- (void)webView:(WKWebView *)webView runJavaScriptAlertPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(void))completionHandler {
+	NSLog(@"[OMORI][JS alert] %@", message ?: @"");
+	if (completionHandler) completionHandler();
+}
+
+- (void)webView:(WKWebView *)webView runJavaScriptConfirmPanelWithMessage:(NSString *)message initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(BOOL))completionHandler {
+	NSLog(@"[OMORI][JS confirm] %@", message ?: @"");
+	if (completionHandler) completionHandler(YES);
+}
+
+- (void)webView:(WKWebView *)webView runJavaScriptTextInputPanelWithPrompt:(NSString *)prompt defaultText:(NSString *)defaultText initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSString * _Nullable result))completionHandler {
+	NSString *safePrompt = prompt ?: @"";
+	NSString *safeDefault = defaultText ?: @"";
+	if ([safeDefault hasPrefix:@"gap:"] ||
+		[safeDefault hasPrefix:@"gap_init:"] ||
+		[safeDefault hasPrefix:@"gap_bridge_mode:"] ||
+		[safeDefault hasPrefix:@"gap_poll:"]) {
+		NSLog(@"[OMORI][Cordova prompt blocked] default=%@ prompt=%@", safeDefault, safePrompt);
+		if (completionHandler) completionHandler(@"");
+		return;
+	}
+
+	NSLog(@"[OMORI][JS prompt] prompt=%@ default=%@", safePrompt, safeDefault);
+	if (completionHandler) completionHandler(safeDefault);
+}
+
 - (void)dealloc {
 	[self.webServer stop];
 }
