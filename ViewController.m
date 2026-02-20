@@ -14,7 +14,7 @@
 	[super viewDidLoad];
 	self.view.backgroundColor = [UIColor clearColor];
 	[self createWebView];
-	[self setupFilesAndStartServer];
+	[self startServer];
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
@@ -81,47 +81,41 @@
 
 #pragma mark - 文件与服务器
 
-- (NSString *)copyGameFiles {
-	NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-	NSString *documentsPath = [paths firstObject];
+- (void)startServer {
+	NSString *gameRootPath = [self resolveGameRootPath];
+	if (!gameRootPath) {
+		NSLog(@"[OMORI] 未找到可用的 index.html，无法启动 Web 服务器");
+		return;
+	}
+	[self startWebServerWithRootPath:gameRootPath];
+}
+
+- (NSString *)resolveGameRootPath {
+	NSFileManager *fm = [NSFileManager defaultManager];
 	NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-	NSFileManager *fm = [NSFileManager defaultManager];
-
-	// 复制整个 Bundle 到数据目录（Documents 下会有 Resources、可执行文件等完整结构）
-	NSError *listError = nil;
-	NSArray *items = [fm contentsOfDirectoryAtPath:bundlePath error:&listError];
-	if (listError || !items.count) return documentsPath;
-	for (NSString *item in items) {
-		NSString *src = [bundlePath stringByAppendingPathComponent:item];
-		NSString *dst = [documentsPath stringByAppendingPathComponent:item];
-		[fm removeItemAtPath:dst error:nil];
-		[fm copyItemAtPath:src toPath:dst error:nil];
-	}
-	return documentsPath;
-}
-
-- (void)setupFilesAndStartServer {
 	NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
 	NSString *documentsPath = [paths firstObject];
-	NSFileManager *fm = [NSFileManager defaultManager];
-	NSArray *existing = [fm contentsOfDirectoryAtPath:documentsPath error:nil];
 
-	if (!existing || existing.count == 0) {
-		// 数据目录为空时才从 Bundle 复制
-		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-			[self copyGameFiles];
-			dispatch_async(dispatch_get_main_queue(), ^{
-				[self startWebServerWithDocumentsPath:documentsPath];
-			});
-		});
-	} else {
-		// 已有文件，直接启动服务器并加载 WebView
-		[self startWebServerWithDocumentsPath:documentsPath];
+	NSArray<NSString *> *candidates = @[
+		[documentsPath stringByAppendingPathComponent:@"Resources"],
+		documentsPath,
+		[bundlePath stringByAppendingPathComponent:@"Resources"],
+		bundlePath
+	];
+
+	for (NSString *candidate in candidates) {
+		NSString *indexPath = [candidate stringByAppendingPathComponent:@"index.html"];
+		if ([fm fileExistsAtPath:indexPath]) {
+			NSLog(@"[OMORI] 使用静态资源目录: %@", candidate);
+			return candidate;
+		}
 	}
+
+	return nil;
 }
 
-- (void)startWebServerWithDocumentsPath:(NSString *)documentsPath {
-	// 服务器在 Documents 打开，html 永远在 Documents/index.html
+- (void)startWebServerWithRootPath:(NSString *)rootPath {
+	// 服务器在包含 index.html 的根目录打开
 	NSDictionary *options = @{
 		GCDWebServerOption_Port: @9000,
 		GCDWebServerOption_BindToLocalhost: @YES,
@@ -129,14 +123,14 @@
 	self.webServer = [[GCDWebServer alloc] init];
 	self.webServer.delegate = self;
 
-	[self.webServer addGETHandlerForBasePath:@"/" directoryPath:documentsPath indexFilename:@"index.html" cacheAge:0 allowRangeRequests:YES];
+	[self.webServer addGETHandlerForBasePath:@"/" directoryPath:rootPath indexFilename:@"index.html" cacheAge:0 allowRangeRequests:YES];
 
 	__weak typeof(self) weakSelf = self;
 	[self.webServer addHandlerWithMatchBlock:^GCDWebServerRequest *(NSString *requestMethod, NSURL *requestURL, NSDictionary<NSString *,NSString *> *requestHeaders, NSString *urlPath, NSDictionary<NSString *,NSString *> *urlQuery) {
 		if (![requestMethod isEqualToString:@"GET"] && ![requestMethod isEqualToString:@"HEAD"]) return nil;
 		return [[GCDWebServerRequest alloc] initWithMethod:requestMethod url:requestURL headers:requestHeaders path:urlPath query:urlQuery];
 	} processBlock:^GCDWebServerResponse *(GCDWebServerRequest *request) {
-		return [weakSelf handleStaticFileRequest:request withDocumentsPath:documentsPath];
+		return [weakSelf handleStaticFileRequest:request withDocumentsPath:rootPath];
 	}];
 
 	[self.webServer startWithOptions:options error:nil];
