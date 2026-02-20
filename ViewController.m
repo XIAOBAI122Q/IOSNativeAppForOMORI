@@ -14,7 +14,7 @@
 	[super viewDidLoad];
 	self.view.backgroundColor = [UIColor clearColor];
 	[self createWebView];
-	[self setupFilesAndStartServer];
+	[self startServer];
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
@@ -33,16 +33,6 @@
 
 - (void)createWebView {
 	WKUserContentController *userContentController = [[WKUserContentController alloc] init];
-	// 屏蔽所有 JS 报错，保证 WebView 继续运行
-	NSString *js = @"(function() {"
-	"window.onerror = function() { return true; };"
-	"window.addEventListener('error', function() { return true; }, true);"
-	"window.addEventListener('unhandledrejection', function(e) { e.preventDefault(); }, true);"
-	"})();";
-	WKUserScript *userScript = [[WKUserScript alloc] initWithSource:js
-	                                                   injectionTime:WKUserScriptInjectionTimeAtDocumentStart
-	                                                forMainFrameOnly:NO];
-	[userContentController addUserScript:userScript];
 
 	WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
 	config.allowsInlineMediaPlayback = YES;
@@ -59,6 +49,7 @@
 	self.webView.backgroundColor = [UIColor blackColor];
 	self.webView.opaque = YES;
 	self.webView.navigationDelegate = self;
+	self.webView.UIDelegate = self;
 	self.webView.scrollView.bounces = NO;
 	self.webView.scrollView.backgroundColor = [UIColor blackColor];
 	[self.view addSubview:self.webView];
@@ -81,47 +72,41 @@
 
 #pragma mark - 文件与服务器
 
-- (NSString *)copyGameFiles {
-	NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-	NSString *documentsPath = [paths firstObject];
+- (void)startServer {
+	NSString *gameRootPath = [self resolveGameRootPath];
+	if (!gameRootPath) {
+		NSLog(@"[OMORI] 未找到可用的 index.html，无法启动 Web 服务器");
+		return;
+	}
+	[self startWebServerWithRootPath:gameRootPath];
+}
+
+- (NSString *)resolveGameRootPath {
+	NSFileManager *fm = [NSFileManager defaultManager];
 	NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
-	NSFileManager *fm = [NSFileManager defaultManager];
-
-	// 复制整个 Bundle 到数据目录（Documents 下会有 Resources、可执行文件等完整结构）
-	NSError *listError = nil;
-	NSArray *items = [fm contentsOfDirectoryAtPath:bundlePath error:&listError];
-	if (listError || !items.count) return documentsPath;
-	for (NSString *item in items) {
-		NSString *src = [bundlePath stringByAppendingPathComponent:item];
-		NSString *dst = [documentsPath stringByAppendingPathComponent:item];
-		[fm removeItemAtPath:dst error:nil];
-		[fm copyItemAtPath:src toPath:dst error:nil];
-	}
-	return documentsPath;
-}
-
-- (void)setupFilesAndStartServer {
 	NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
 	NSString *documentsPath = [paths firstObject];
-	NSFileManager *fm = [NSFileManager defaultManager];
-	NSArray *existing = [fm contentsOfDirectoryAtPath:documentsPath error:nil];
 
-	if (!existing || existing.count == 0) {
-		// 数据目录为空时才从 Bundle 复制
-		dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-			[self copyGameFiles];
-			dispatch_async(dispatch_get_main_queue(), ^{
-				[self startWebServerWithDocumentsPath:documentsPath];
-			});
-		});
-	} else {
-		// 已有文件，直接启动服务器并加载 WebView
-		[self startWebServerWithDocumentsPath:documentsPath];
+	NSArray<NSString *> *candidates = @[
+		[documentsPath stringByAppendingPathComponent:@"Resources"],
+		documentsPath,
+		[bundlePath stringByAppendingPathComponent:@"Resources"],
+		bundlePath
+	];
+
+	for (NSString *candidate in candidates) {
+		NSString *indexPath = [candidate stringByAppendingPathComponent:@"index.html"];
+		if ([fm fileExistsAtPath:indexPath]) {
+			NSLog(@"[OMORI] 使用静态资源目录: %@", candidate);
+			return candidate;
+		}
 	}
+
+	return nil;
 }
 
-- (void)startWebServerWithDocumentsPath:(NSString *)documentsPath {
-	// 服务器在 Documents 打开，html 永远在 Documents/index.html
+- (void)startWebServerWithRootPath:(NSString *)rootPath {
+	// 服务器在包含 index.html 的根目录打开
 	NSDictionary *options = @{
 		GCDWebServerOption_Port: @9000,
 		GCDWebServerOption_BindToLocalhost: @YES,
@@ -129,17 +114,25 @@
 	self.webServer = [[GCDWebServer alloc] init];
 	self.webServer.delegate = self;
 
-	[self.webServer addGETHandlerForBasePath:@"/" directoryPath:documentsPath indexFilename:@"index.html" cacheAge:0 allowRangeRequests:YES];
+	[self.webServer addGETHandlerForBasePath:@"/" directoryPath:rootPath indexFilename:@"index.html" cacheAge:0 allowRangeRequests:YES];
 
 	__weak typeof(self) weakSelf = self;
 	[self.webServer addHandlerWithMatchBlock:^GCDWebServerRequest *(NSString *requestMethod, NSURL *requestURL, NSDictionary<NSString *,NSString *> *requestHeaders, NSString *urlPath, NSDictionary<NSString *,NSString *> *urlQuery) {
 		if (![requestMethod isEqualToString:@"GET"] && ![requestMethod isEqualToString:@"HEAD"]) return nil;
 		return [[GCDWebServerRequest alloc] initWithMethod:requestMethod url:requestURL headers:requestHeaders path:urlPath query:urlQuery];
 	} processBlock:^GCDWebServerResponse *(GCDWebServerRequest *request) {
-		return [weakSelf handleStaticFileRequest:request withDocumentsPath:documentsPath];
+		return [weakSelf handleStaticFileRequest:request withDocumentsPath:rootPath];
 	}];
 
-	[self.webServer startWithOptions:options error:nil];
+	NSError *startError = nil;
+	BOOL started = [self.webServer startWithOptions:options error:&startError];
+	if (!started) {
+		NSLog(@"[OMORI] WebServer 启动失败: %@", startError);
+	}
+
+	if (self.webServer.isRunning) {
+		[self loadGameURL];
+	}
 }
 
 - (void)webServerDidStart:(GCDWebServer *)server {
@@ -345,23 +338,35 @@
 #pragma mark - WKNavigationDelegate
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+	[webView evaluateJavaScript:@"document.readyState" completionHandler:^(id _Nullable result, NSError * _Nullable error) {
+		if (error) {
+			NSLog(@"[OMORI] JS 检查失败: %@", error);
+			return;
+		}
+		NSLog(@"[OMORI] 页面加载完成 readyState=%@ URL=%@", result, webView.URL.absoluteString);
+	}];
+}
+
+- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+	NSLog(@"[OMORI] didFailNavigation: %@", error);
 }
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+	NSLog(@"[OMORI] didFailProvisionalNavigation: %@", error);
 	if (error.code == NSURLErrorNotConnectedToInternet ||
 	    error.code == NSURLErrorNetworkConnectionLost ||
-	    error.code == NSURLErrorTimedOut) {
-		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-			NSURL *url = webView.URL;
-			if (url) {
-				NSURLRequest *request = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:30.0];
-				[webView loadRequest:request];
-			}
+	    error.code == NSURLErrorTimedOut ||
+	    error.code == NSURLErrorCannotConnectToHost) {
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+			[self loadGameURL];
 		});
 	}
 }
 
-- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+
+- (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
+	NSLog(@"[OMORI] WebContent 进程终止，自动重载页面");
+	[webView reload];
 }
 
 - (void)webView:(WKWebView *)webView didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition, NSURLCredential * _Nullable))completionHandler {
